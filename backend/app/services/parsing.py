@@ -12,6 +12,8 @@ from pypdf import PdfReader
 SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".html", ".htm"}
 
 
+# DELETE -- This is not in use. Prefer app.ai.parsing for extraction.
+# SUPPORTED_EXTENSIONS above is still used by routes/documents.py.
 def extract_text(*, filename: str, data: bytes) -> str:
     suffix = Path(filename).suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:

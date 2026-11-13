@@ -18,6 +18,7 @@ from app.services.auth import require_role
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
+# NOTE: Duplicate of workspaces.require_owner/OwnerDep — consolidate into app.api.deps later.
 def require_owner(principal: PrincipalDep) -> Principal:
     require_role(principal, "owner")
     return principal

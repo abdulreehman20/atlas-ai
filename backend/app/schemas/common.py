@@ -12,6 +12,7 @@ class APIModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# DELETE -- This is not in use. Exception handlers do not return this schema.
 class ErrorDetail(BaseModel):
     code: str
     message: str
@@ -24,6 +25,7 @@ class HealthResponse(BaseModel):
     checks: dict[str, str] = Field(default_factory=dict)
 
 
+# DELETE -- This is not in use. /me returns a raw dict instead.
 class MeResponse(APIModel):
     user_id: str
     email: str | None

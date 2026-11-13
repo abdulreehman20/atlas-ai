@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("Atlas backend shutdown complete")
 
 
+# DELETE -- This is not in use. lifespan calls configure_langsmith instead.
 def apply_langsmith_env(settings: Settings) -> None:
     """Expose LangSmith env vars for LangChain auto-instrumentation."""
     if settings.langsmith_tracing:

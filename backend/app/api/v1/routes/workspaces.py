@@ -21,6 +21,7 @@ from app.services.entitlements import assert_can_invite, get_entitlements_for_or
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 
+# NOTE: Duplicate of billing.require_owner/OwnerDep — consolidate into app.api.deps later.
 def require_owner(principal: PrincipalDep) -> Principal:
     require_role(principal, "owner")
     return principal

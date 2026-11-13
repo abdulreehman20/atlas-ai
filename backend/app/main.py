@@ -13,8 +13,7 @@ from app.api.v1.router import api_router
 from app.api.v1.routes import health as health_routes
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
-
-# from app.core.lifespan import lifespan
+from app.core.lifespan import lifespan
 
 
 def create_app() -> FastAPI:
@@ -32,7 +31,7 @@ def create_app() -> FastAPI:
     application = FastAPI(
         title=settings.app_name,
         version=__version__,
-        # lifespan=lifespan,
+        lifespan=lifespan,
     )
     register_exception_handlers(application)
     application.add_middleware(

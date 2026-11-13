@@ -25,6 +25,7 @@ def list_workspace_documents(session: Session, *, workspace_id: UUID) -> list[Do
     return list(session.exec(statement).all())
 
 
+# DELETE -- This is not in use by live routes (only orphaned services/documents.py).
 def get_document(session: Session, *, document_id: UUID) -> Document | None:
     return session.get(Document, document_id)
 
@@ -59,9 +60,11 @@ def get_chunks_by_ids(
     return list(session.exec(statement).all())
 
 
+# DELETE -- This is not in use. No current callers.
 def get_version(session: Session, *, version_id: UUID) -> DocumentVersion | None:
     return session.get(DocumentVersion, version_id)
 
 
+# DELETE -- This is not in use. No current callers.
 def get_job(session: Session, *, job_id: UUID) -> IngestionJob | None:
     return session.get(IngestionJob, job_id)

@@ -22,6 +22,7 @@ def get_active_membership(
     return session.exec(statement).first()
 
 
+# DELETE -- This is not in use. No current callers.
 def get_membership_by_workspace_user(
     session: Session,
     *,
