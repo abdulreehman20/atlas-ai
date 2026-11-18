@@ -17,7 +17,15 @@
 
 **Ask questions. Get cited answers. Stay inside your workspace.**
 
-[Features](#-features) · [Problem](#-the-problem) · [Tech Stack](#-tech-stack) · [Installation](#-installation) · [Docs](#-documentation)
+[Live App](https://atlas-ai-rag-system.vercel.app/chat) · [API Docs](https://atlas-ai.fastapicloud.dev/docs) · [Features](#-features) · [Installation](#-installation)
+
+<br />
+
+| | URL |
+|---|---|
+| 🌐 **Frontend** | [https://atlas-ai-rag-system.vercel.app](https://atlas-ai-rag-system.vercel.app/chat) |
+| ⚙️ **Backend API** | [https://atlas-ai.fastapicloud.dev](https://atlas-ai.fastapicloud.dev/docs) |
+| 📘 **Swagger** | [https://atlas-ai.fastapicloud.dev/docs](https://atlas-ai.fastapicloud.dev/docs) |
 
 </div>
 
@@ -160,6 +168,23 @@ App: [http://localhost:3000](http://localhost:3000)
 | `STRIPE_SECRET_KEY` / `STRIPE_PRICE_ID` / `STRIPE_WEBHOOK_SECRET` | Pro billing |
 
 > ⚠️ Never commit `.env` files. Use `.env.example` as the template.
+
+### Production CORS (required)
+
+On the backend host, set:
+
+```env
+CORS_ORIGINS=https://atlas-ai-rag-system.vercel.app
+FRONTEND_URL=https://atlas-ai-rag-system.vercel.app
+```
+
+On Vercel (frontend):
+
+```env
+NEXT_PUBLIC_API_BASE_URL=https://atlas-ai.fastapicloud.dev/api/v1
+```
+
+Also add the Vercel URL to **Supabase Auth → Redirect URLs**.
 
 ---
 

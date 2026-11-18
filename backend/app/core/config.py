@@ -86,13 +86,24 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, value: object) -> list[str]:
+        def _normalize(origin: str) -> str:
+            # Browsers send Origin without a trailing slash; strip for exact match.
+            return origin.strip().rstrip("/")
+
         if value is None or value == "":
             return ["http://localhost:3000"]
         if isinstance(value, list):
-            return [str(item).strip() for item in value if str(item).strip()]
+            return [_normalize(str(item)) for item in value if str(item).strip()]
         if isinstance(value, str):
-            return [part.strip() for part in value.split(",") if part.strip()]
+            return [_normalize(part) for part in value.split(",") if part.strip()]
         raise TypeError("cors_origins must be a comma-separated string or list")
+
+    @field_validator("frontend_url", mode="before")
+    @classmethod
+    def normalize_frontend_url(cls, value: object) -> str:
+        if value is None or value == "":
+            return "http://localhost:3000"
+        return str(value).strip().rstrip("/")
 
     @property
     def alembic_database_url(self) -> str:
