@@ -93,10 +93,10 @@ def process_ingestion_job(
         if prior_ids:
             vectors.delete_ids(workspace_id=job.workspace_id, ids=prior_ids)
 
-        texts = [chunk.text for chunk in chunks]
+        texts = [chunk.text.replace("\x00", "") for chunk in chunks]
         embeddings_list = embeddings.embed_documents(texts)
         upsert_payload = []
-        for chunk, values in zip(chunks, embeddings_list, strict=True):
+        for chunk, values, clean_text in zip(chunks, embeddings_list, texts, strict=True):
             session.add(
                 DocumentChunk(
                     document_id=document.id,
@@ -104,7 +104,7 @@ def process_ingestion_job(
                     workspace_id=job.workspace_id,
                     chunk_id=chunk.chunk_id,
                     chunk_index=chunk.chunk_index,
-                    text=chunk.text,
+                    text=clean_text,
                     page_number=chunk.page_number,
                     section=chunk.section,
                     start_offset=chunk.start_offset,
@@ -129,7 +129,7 @@ def process_ingestion_job(
 
         version.parser_version = PARSER_VERSION
         version.chunker_version = CHUNKER_VERSION
-        version.embedding_model_id = settings.bedrock_embedding_model_id
+        version.embedding_model_id = settings.openrouter_embedding_model
         version.status = DocumentStatus.READY.value
         document.status = DocumentStatus.READY.value
         document.error_code = None
@@ -155,6 +155,11 @@ def _fail(
     code: str,
     message: str,
 ) -> IngestionJob:
+    # Prior flush may have aborted the transaction (e.g. Postgres NUL rejection).
+    session.rollback()
+    job = session.get(IngestionJob, job.id) or job
+    if document is not None and getattr(document, "id", None) is not None:
+        document = session.get(Document, document.id) or document
     job.status = IngestionJobStatus.FAILED.value
     job.error_code = code
     job.error_message = message
@@ -177,18 +182,38 @@ def process_next_queued_job(
     embeddings: EmbeddingClient,
     vectors: VectorStoreClient,
 ) -> IngestionJob | None:
-    statement = (
+    now = datetime.now(UTC)
+    queued = session.exec(
         select(IngestionJob)
         .where(IngestionJob.status == IngestionJobStatus.QUEUED.value)
         .order_by(IngestionJob.created_at.asc())
-    )
-    job = session.exec(statement).first()
-    if job is None:
+    ).first()
+    if queued is not None:
+        return process_ingestion_job(
+            session,
+            settings,
+            job_id=queued.id,
+            storage=storage,
+            embeddings=embeddings,
+            vectors=vectors,
+        )
+
+    # Reclaim jobs left RUNNING after a crashed BackgroundTask / worker.
+    stale = session.exec(
+        select(IngestionJob)
+        .where(
+            IngestionJob.status == IngestionJobStatus.RUNNING.value,
+            IngestionJob.lease_expires_at.is_not(None),
+            IngestionJob.lease_expires_at < now,
+        )
+        .order_by(IngestionJob.created_at.asc())
+    ).first()
+    if stale is None:
         return None
     return process_ingestion_job(
         session,
         settings,
-        job_id=job.id,
+        job_id=stale.id,
         storage=storage,
         embeddings=embeddings,
         vectors=vectors,

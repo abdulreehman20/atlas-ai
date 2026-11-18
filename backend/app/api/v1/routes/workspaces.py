@@ -6,15 +6,31 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import select
 
 from app.api.deps import PrincipalDep, SessionDep, SettingsDep
-from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
+from app.core.exceptions import (
+    AppError,
+    ConflictError,
+    EntitlementError,
+    NotFoundError,
+)
 from app.core.security import Principal
-from app.db.models.enums import MembershipRole, MembershipStatus
+from app.db.models.document import Document
+from app.db.models.enums import (
+    DocumentStatus,
+    MembershipRole,
+    MembershipStatus,
+    OrgStatus,
+    PlanTier,
+    WorkspaceStatus,
+)
 from app.db.models.membership import WorkspaceMembership
+from app.db.models.organization import Organization
 from app.db.models.workspace import Workspace
+from app.ai.prompts import LOCKED_SYSTEM_PROMPT
+from app.services import supabase_auth
 from app.services.auth import require_role
 from app.services.entitlements import assert_can_invite, get_entitlements_for_org
 
@@ -34,8 +50,15 @@ class PromptUpdate(BaseModel):
     system_prompt_override: str | None = None
 
 
+class WorkspaceUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    system_prompt_override: str | None = None
+
+
 class InviteRequest(BaseModel):
     email: EmailStr
+    first_name: str = Field(default="", max_length=100)
+    last_name: str = Field(default="", max_length=100)
 
 
 @router.get("/current")
@@ -46,7 +69,56 @@ def get_current_workspace(principal: PrincipalDep, session: SessionDep) -> dict:
     return {
         "organization_id": str(principal.organization_id),
         "workspace_id": str(principal.workspace_id),
+        "name": ws.name,
+        "slug": ws.slug,
+        "status": ws.status,
         "system_prompt_override": ws.system_prompt_override,
+        "default_system_prompt": LOCKED_SYSTEM_PROMPT,
+        "effective_system_prompt": ws.system_prompt_override or LOCKED_SYSTEM_PROMPT,
+    }
+
+
+@router.put("/current")
+def update_current_workspace(
+    body: WorkspaceUpdate,
+    principal: OwnerDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> dict:
+    ws = session.get(Workspace, principal.workspace_id)
+    if ws is None:
+        raise NotFoundError("Workspace not found")
+
+    if body.system_prompt_override is not None:
+        entitlements = get_entitlements_for_org(
+            session, settings, organization_id=principal.organization_id
+        )
+        if body.system_prompt_override and not entitlements.custom_system_prompt:
+            raise EntitlementError(
+                "Custom system prompt requires the Pro plan. Upgrade to Pro to save workspace prompt overrides.",
+                quota="custom_system_prompt",
+                details={"upgrade_required": True, "plan": "pro"},
+            )
+        ws.system_prompt_override = body.system_prompt_override
+
+    if body.name is not None:
+        ws.name = body.name.strip()
+        if not ws.name:
+            raise AppError("Workspace name is required", code="invalid_name", status_code=422)
+
+    session.add(ws)
+    session.commit()
+    session.refresh(ws)
+
+    return {
+        "organization_id": str(principal.organization_id),
+        "workspace_id": str(ws.id),
+        "name": ws.name,
+        "slug": ws.slug,
+        "status": ws.status,
+        "system_prompt_override": ws.system_prompt_override,
+        "default_system_prompt": LOCKED_SYSTEM_PROMPT,
+        "effective_system_prompt": ws.system_prompt_override or LOCKED_SYSTEM_PROMPT,
     }
 
 
@@ -57,25 +129,51 @@ def put_system_prompt(
     session: SessionDep,
     settings: SettingsDep,
 ) -> dict:
-    entitlements = get_entitlements_for_org(
-        session, settings, organization_id=principal.organization_id
+    return update_current_workspace(
+        WorkspaceUpdate(system_prompt_override=body.system_prompt_override),
+        principal,
+        session,
+        settings,
     )
-    if body.system_prompt_override and not entitlements.custom_system_prompt:
-        raise ForbiddenError("Custom system prompt requires Pro plan")
+
+
+@router.delete("/current")
+def delete_current_workspace(principal: OwnerDep, session: SessionDep) -> dict:
+    """Archive the workspace and related tenant data (owner-only)."""
 
     ws = session.get(Workspace, principal.workspace_id)
     if ws is None:
         raise NotFoundError("Workspace not found")
+    org = session.get(Organization, principal.organization_id)
 
-    ws.system_prompt_override = body.system_prompt_override
+    memberships = session.exec(
+        select(WorkspaceMembership).where(
+            WorkspaceMembership.workspace_id == principal.workspace_id
+        )
+    ).all()
+    for row in memberships:
+        row.status = MembershipStatus.REMOVED.value
+        session.add(row)
+
+    documents = session.exec(
+        select(Document).where(Document.workspace_id == principal.workspace_id)
+    ).all()
+    for doc in documents:
+        if doc.status != DocumentStatus.DELETED.value:
+            doc.status = DocumentStatus.DELETED.value
+            session.add(doc)
+
+    ws.status = WorkspaceStatus.ARCHIVED.value
     session.add(ws)
-    session.commit()
-    session.refresh(ws)
+    if org is not None:
+        org.status = OrgStatus.SUSPENDED.value
+        session.add(org)
 
+    session.commit()
     return {
-        "organization_id": str(principal.organization_id),
         "workspace_id": str(ws.id),
-        "system_prompt_override": ws.system_prompt_override,
+        "organization_id": str(principal.organization_id),
+        "status": ws.status,
     }
 
 
@@ -126,10 +224,65 @@ def invite_member(
     if existing:
         raise ConflictError("Member already exists")
 
+    first_name = body.first_name.strip()
+    last_name = body.last_name.strip()
+    metadata = {
+        "first_name": first_name,
+        "last_name": last_name,
+        "full_name": " ".join(part for part in (first_name, last_name) if part).strip(),
+        "invited_to_workspace_id": str(principal.workspace_id),
+    }
+
+    # Client page can read invite tokens from the URL hash and collect a password.
+    redirect_to = f"{settings.frontend_url.rstrip('/')}/auth/accept-invite"
+    email_sent = False
+    invited_user_id = f"invite:{uuid4()}"
+    try:
+        invited = supabase_auth.invite_user_by_email(
+            settings,
+            email=email,
+            redirect_to=redirect_to,
+            data=metadata,
+        )
+        email_sent = bool(invited.get("email_sent"))
+        if invited.get("id"):
+            invited_user_id = str(invited["id"])
+    except AppError as exc:
+        # User already registered — keep membership invite; they can sign in to accept.
+        details = exc.details if isinstance(exc.details, dict) else {}
+        message = str(exc.message if hasattr(exc, "message") else exc).lower()
+        already_exists = exc.status_code in {422, 400} and (
+            "already" in message or details.get("error_code") == "email_exists"
+        )
+        if already_exists:
+            pass
+        elif "rate limit" in message or details.get("error_code") in {
+            "over_email_send_rate_limit",
+            "email_rate_limit_exceeded",
+        }:
+            entitlements = get_entitlements_for_org(
+                session,
+                settings,
+                organization_id=principal.organization_id,
+            )
+            if entitlements.plan_tier == PlanTier.FREE:
+                raise EntitlementError(
+                    "To invite more members, upgrade to the Pro plan.",
+                    quota="members",
+                    details={"upgrade_required": True, "plan": "pro"},
+                ) from exc
+            raise AppError(
+                "Invite email rate limit reached. Please try again in a few minutes.",
+                code="invite_rate_limited",
+                status_code=429,
+            ) from exc
+        else:
+            raise
+
     membership = WorkspaceMembership(
         workspace_id=principal.workspace_id,
         organization_id=principal.organization_id,
-        supabase_user_id=f"invite:{uuid4()}",
+        supabase_user_id=invited_user_id,
         email=email,
         role=MembershipRole.MEMBER.value,
         status=MembershipStatus.INVITED.value,
@@ -144,6 +297,27 @@ def invite_member(
         "email": membership.email,
         "role": membership.role,
         "status": membership.status,
+        "email_sent": email_sent,
+        "first_name": first_name,
+        "last_name": last_name,
+    }
+
+
+@router.post("/current/members/accept")
+def accept_invite(principal: PrincipalDep) -> dict:
+    """Confirm invite acceptance.
+
+    Acceptance also runs implicitly inside principal resolution on first
+    authenticated request (`/me`, etc.) when an INVITED row matches the email.
+    """
+
+    return {
+        "id": str(principal.membership_id),
+        "user_id": principal.user_id,
+        "email": principal.email,
+        "role": principal.role,
+        "status": principal.membership_status,
+        "accepted": principal.role == "member",
     }
 
 

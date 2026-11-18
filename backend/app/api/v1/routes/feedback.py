@@ -8,10 +8,10 @@ from app.api.deps import PrincipalDep, SessionDep
 from app.db.models.feedback import Feedback
 from app.schemas.chat import FeedbackRequest, FeedbackResponse
 
-router = APIRouter()
+router = APIRouter(prefix="/feedback", tags=["feedback"])
 
 
-@router.post("/feedback", response_model=FeedbackResponse, tags=["chat"])
+@router.post("", response_model=FeedbackResponse)
 def create_feedback(
     body: FeedbackRequest,
     principal: PrincipalDep,

@@ -1,7 +1,5 @@
 """Approved long-term memory records."""
 
-# DELETE -- This is not in use. Model/table exists but no app logic reads or writes it yet.
-
 from __future__ import annotations
 
 from uuid import UUID

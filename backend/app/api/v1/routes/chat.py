@@ -1,8 +1,9 @@
-"""Chat RAG endpoint."""
+"""Chat RAG endpoints (sync + SSE stream)."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import (
     ChatClientDep,
@@ -41,3 +42,28 @@ def post_chat(
         vectors=vectors,
         request_id=request_id,
     )
+
+
+@router.post("/chat/stream", tags=["chat"])
+def post_chat_stream(
+    body: ChatRequest,
+    principal: PrincipalDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    chat_client: ChatClientDep,
+    embeddings: EmbeddingClientDep,
+    vectors: VectorStoreDep,
+    request_id: RequestIdDep,
+) -> StreamingResponse:
+    generator = chat_service.stream_chat_sse(
+        session,
+        settings,
+        principal=principal,
+        message=body.message,
+        conversation_id=body.conversation_id,
+        chat_client=chat_client,
+        embeddings=embeddings,
+        vectors=vectors,
+        request_id=request_id,
+    )
+    return StreamingResponse(generator, media_type="text/event-stream")

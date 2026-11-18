@@ -41,12 +41,13 @@ class Settings(BaseSettings):
     migration_database_url: str = ""
     checkpoint_database_url: str = ""
 
-    aws_region: str = "us-east-1"
-    aws_access_key_id: str = ""
-    aws_secret_access_key: str = ""
-    bedrock_chat_model_id: str = "amazon.nova-lite-v1:0"
-    bedrock_embedding_model_id: str = "amazon.titan-embed-text-v2:0"
-    embedding_dimension: int = 1024
+    # OpenRouter (Bedrock replacement for chat + embeddings)
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_chat_model: str = "nvidia/nemotron-3.5-lightning:free"
+    openrouter_embedding_model: str = "nvidia/nemotron-3-embed-1b:free"
+    # Nemotron 3 Embed 1B native size — Pinecone index must match.
+    embedding_dimension: int = 2048
 
     pinecone_api_key: str = ""
     pinecone_index_name: str = "atlas-rag-index-dev"
@@ -66,17 +67,18 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     memory_max_turns: int = 6
     context_token_budget: int = 12000
+    chat_max_tokens: int = 4096
     prompt_version: str = "atlas-rag-v1"
 
     chunk_size: int = 1000
     chunk_overlap: int = 150
     free_member_limit: int = 3
-    free_document_limit: int = 20
+    free_document_limit: int = 10
     free_storage_mib: int = 500
     free_chat_monthly: int = 100
     free_max_file_mib: int = 10
     pro_member_limit: int = 25
-    pro_document_limit: int = 500
+    pro_document_limit: int = 200
     pro_storage_mib: int = 20480
     pro_chat_monthly: int = 5000
     pro_max_file_mib: int = 25

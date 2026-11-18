@@ -42,8 +42,16 @@ export type DocumentItem = {
   status: DocumentStatus;
   size_bytes: number;
   owner_user_id: string;
+  storage_path?: string | null;
   created_at: string;
   error_message?: string | null;
+};
+
+export type DocumentViewUrlResponse = {
+  document_id: string;
+  url: string;
+  filename: string;
+  expires_in: number;
 };
 
 export type DocumentCreateResponse = {
@@ -51,6 +59,8 @@ export type DocumentCreateResponse = {
   storage_path: string;
   bucket: string;
   status: DocumentStatus | string;
+  upload_token?: string | null;
+  upload_url?: string | null;
 };
 
 export type UploadCompleteResponse = {
@@ -115,6 +125,9 @@ export type MemberItem = {
   role: WorkspaceRole;
   status: "active" | "invited" | "removed" | string;
   created_at?: string;
+  email_sent?: boolean;
+  first_name?: string;
+  last_name?: string;
 };
 
 export type SubscriptionStatus = {
@@ -127,7 +140,12 @@ export type SubscriptionStatus = {
 export type WorkspaceSettings = {
   organization_id: string;
   workspace_id: string;
+  name?: string;
+  slug?: string;
+  status?: string;
   system_prompt_override: string | null;
+  default_system_prompt?: string;
+  effective_system_prompt?: string;
 };
 
 export type CheckoutResponse = {

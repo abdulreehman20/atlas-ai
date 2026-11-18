@@ -1,5 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 
 import { getSupabaseAnonKey, getSupabaseUrl } from "@/lib/supabase/env";
 
@@ -52,7 +52,16 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && (pathname === "/login" || pathname === "/signup")) {
+  if (
+    user &&
+    (pathname === "/login" ||
+      pathname === "/signup" ||
+      pathname === "/auth/accept-invite")
+  ) {
+    // Accept-invite needs an authenticated session to set a password first.
+    if (pathname === "/auth/accept-invite") {
+      return supabaseResponse;
+    }
     const url = request.nextUrl.clone();
     url.pathname = "/chat";
     return NextResponse.redirect(url);

@@ -9,15 +9,15 @@ from app.api.deps import SettingsDep
 from app.db.engine import get_engine
 from app.schemas.common import HealthResponse
 
-router = APIRouter()
+router = APIRouter(prefix="/health", tags=["health"])
 
 
-@router.get("/health/live", response_model=HealthResponse)
+@router.get("/live", response_model=HealthResponse)
 def live() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@router.get("/health/ready", response_model=HealthResponse)
+@router.get("/ready", response_model=HealthResponse)
 def ready(settings: SettingsDep) -> HealthResponse:
     checks: dict[str, str] = {}
     try:

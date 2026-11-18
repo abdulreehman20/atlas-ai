@@ -14,7 +14,7 @@ import time
 
 from sqlmodel import Session
 
-from app.ai.embeddings import BedrockEmbeddingClient, StubEmbeddingClient
+from app.ai.embeddings import OpenRouterEmbeddingClient, StubEmbeddingClient
 from app.ai.vector_store import InMemoryVectorStore, PineconeVectorStore
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, get_logger
@@ -39,10 +39,10 @@ def _build_clients(settings: Settings):
     else:
         storage = SupabaseStorageClient(settings)
 
-    if settings.app_env == "test" or not settings.aws_access_key_id:
+    if settings.app_env == "test" or not settings.openrouter_api_key:
         embeddings = StubEmbeddingClient(dimension=settings.embedding_dimension)
     else:
-        embeddings = BedrockEmbeddingClient(settings)
+        embeddings = OpenRouterEmbeddingClient(settings)
 
     if settings.app_env == "test" or not settings.pinecone_api_key:
         vectors = InMemoryVectorStore()

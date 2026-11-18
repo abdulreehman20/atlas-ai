@@ -32,11 +32,26 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=__version__,
         lifespan=lifespan,
+        openapi_tags=[
+            {"name": "health", "description": "Health check"},
+            {"name": "me", "description": "Current principal and entitlements"},
+            {"name": "auth", "description": "Supabase Auth (signup / login / refresh / logout)"},
+            {"name": "workspaces", "description": "Workspace settings and members"},
+            {"name": "documents", "description": "Document upload, reprocess, delete"},
+            {"name": "ingestion", "description": "Ingestion jobs"},
+            {"name": "chat", "description": "RAG chat (sync + stream)"},
+            {"name": "feedback", "description": "Chat feedback"},   
+            {"name": "conversations", "description": "Conversation history"},
+            {"name": "memory", "description": "Long-term memory records"},
+            {"name": "approvals", "description": "Human-in-the-loop approvals"},
+            {"name": "billing", "description": "Stripe billing"},
+            {"name": "usage", "description": "Usage summaries"},
+        ],
     )
     register_exception_handlers(application)
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
+        allow_origins=settings.cors_origins,    
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -53,6 +68,31 @@ def create_app() -> FastAPI:
     # Probe paths at root; versioned API under configured prefix.
     application.include_router(health_routes.router)
     application.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    def custom_openapi():
+        if application.openapi_schema:
+            return application.openapi_schema
+        from fastapi.openapi.utils import get_openapi
+
+        schema = get_openapi(
+            title=application.title,
+            version=application.version,
+            routes=application.routes,
+            tags=application.openapi_tags,
+        )
+        schema.setdefault("components", {}).setdefault("securitySchemes", {})["HTTPBearer"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": (
+                "Paste a Supabase access_token. Use POST /api/v1/auth/login first, "
+                "then Authorize with the returned access_token."
+            ),
+        }
+        application.openapi_schema = schema
+        return application.openapi_schema
+
+    application.openapi = custom_openapi  # type: ignore[method-assign]
     return application
 
 

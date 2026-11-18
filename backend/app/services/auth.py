@@ -76,6 +76,39 @@ def bootstrap_tenant(
     return _to_principal(membership, email=user.email)
 
 
+def accept_pending_invite(
+    session: Session,
+    *,
+    user: AuthUser,
+    request_id: str | None = None,
+) -> Principal | None:
+    """Activate an INVITED membership matching the user's email, if any."""
+
+    if not user.email:
+        return None
+    invite = membership_repo.get_pending_invite_by_email(session, email=user.email)
+    if invite is None:
+        return None
+    membership = membership_repo.activate_invite(
+        session,
+        membership=invite,
+        supabase_user_id=user.user_id,
+        email=user.email,
+    )
+    record_audit(
+        session,
+        action="membership.invite_accepted",
+        actor_user_id=user.user_id,
+        organization_id=membership.organization_id,
+        workspace_id=membership.workspace_id,
+        target_type="membership",
+        target_id=str(membership.id),
+        request_id=request_id,
+    )
+    session.commit()
+    return _to_principal(membership, email=user.email)
+
+
 def resolve_principal(
     session: Session,
     *,
@@ -84,11 +117,16 @@ def resolve_principal(
     bootstrap: bool = True,
 ) -> Principal:
     membership = membership_repo.get_active_membership(session, supabase_user_id=user.user_id)
-    if membership is None:
-        if not bootstrap:
-            raise ForbiddenError("No workspace membership")
-        return bootstrap_tenant(session, user=user, request_id=request_id)
-    return _to_principal(membership, email=user.email)
+    if membership is not None:
+        return _to_principal(membership, email=user.email)
+
+    accepted = accept_pending_invite(session, user=user, request_id=request_id)
+    if accepted is not None:
+        return accepted
+
+    if not bootstrap:
+        raise ForbiddenError("No workspace membership")
+    return bootstrap_tenant(session, user=user, request_id=request_id)
 
 
 def require_role(principal: Principal, *roles: Role) -> None:

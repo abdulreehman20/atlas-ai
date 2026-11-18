@@ -8,8 +8,8 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlmodel import Session
 
-from app.ai.bedrock import BedrockChatClient, ChatModelClient, StubChatClient
-from app.ai.embeddings import BedrockEmbeddingClient, EmbeddingClient, StubEmbeddingClient
+from app.ai.chat_model import ChatModelClient, OpenRouterChatClient, StubChatClient
+from app.ai.embeddings import EmbeddingClient, OpenRouterEmbeddingClient, StubEmbeddingClient
 from app.ai.vector_store import InMemoryVectorStore, PineconeVectorStore, VectorStoreClient
 from app.core.config import Settings, get_settings
 from app.core.exceptions import UnauthorizedError
@@ -47,9 +47,9 @@ PrincipalDep = Annotated[Principal, Depends(get_current_principal)]
 
 
 def get_embedding_client(settings: SettingsDep) -> EmbeddingClient:
-    if settings.app_env == "test" or not settings.aws_access_key_id:
+    if settings.app_env == "test" or not settings.openrouter_api_key:
         return StubEmbeddingClient(dimension=settings.embedding_dimension)
-    return BedrockEmbeddingClient(settings)
+    return OpenRouterEmbeddingClient(settings)
 
 
 def get_vector_store(settings: SettingsDep) -> VectorStoreClient:
@@ -65,9 +65,9 @@ def get_storage_client(settings: SettingsDep) -> StorageClient:
 
 
 def get_chat_client(settings: SettingsDep) -> ChatModelClient:
-    if settings.app_env == "test" or not settings.aws_access_key_id:
+    if settings.app_env == "test" or not settings.openrouter_api_key:
         return StubChatClient()
-    return BedrockChatClient(settings)
+    return OpenRouterChatClient(settings)
 
 
 EmbeddingClientDep = Annotated[EmbeddingClient, Depends(get_embedding_client)]

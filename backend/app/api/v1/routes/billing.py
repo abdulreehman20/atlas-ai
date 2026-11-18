@@ -60,6 +60,7 @@ def create_checkout(principal: OwnerDep, session: SessionDep, settings: Settings
     if customer is None:
         created = stripe.Customer.create(
             email=principal.email,
+            name=(principal.email or "Atlas customer").split("@")[0],
             metadata={"organization_id": str(principal.organization_id)},
         )
         customer = BillingCustomer(
@@ -69,14 +70,25 @@ def create_checkout(principal: OwnerDep, session: SessionDep, settings: Settings
         session.add(customer)
         session.commit()
         session.refresh(customer)
+    else:
+        # Ensure name exists for India export-compliance Checkout sessions.
+        try:
+            stripe.Customer.modify(
+                customer.stripe_customer_id,
+                name=(principal.email or "Atlas customer").split("@")[0],
+            )
+        except Exception:  # noqa: BLE001 — checkout still collects address below
+            pass
 
     session_obj = stripe.checkout.Session.create(
         mode="subscription",
         customer=customer.stripe_customer_id,
         line_items=[{"price": settings.stripe_price_id, "quantity": 1}],
-        # TODO: use the frontend URL from the settings
-        success_url=f"{settings.frontend_url.rstrip('/')}/billing?checkout=success",
-        cancel_url=f"{settings.frontend_url.rstrip('/')}/billing?checkout=cancel",
+        # India RBI/export rules require full billing name + address on Checkout.
+        billing_address_collection="required",
+        customer_update={"address": "auto", "name": "auto"},
+        success_url=f"{settings.frontend_url.rstrip('/')}/settings?checkout=success#billing",
+        cancel_url=f"{settings.frontend_url.rstrip('/')}/settings?checkout=cancel#billing",
         metadata={"organization_id": str(principal.organization_id)},
         subscription_data={"metadata": {"organization_id": str(principal.organization_id)}},
     )
@@ -99,7 +111,7 @@ def create_portal(principal: OwnerDep, session: SessionDep, settings: SettingsDe
 
     portal = stripe.billing_portal.Session.create(
         customer=customer.stripe_customer_id,
-        return_url=f"{settings.frontend_url.rstrip('/')}/billing",
+        return_url=f"{settings.frontend_url.rstrip('/')}/settings#billing",
     )
     return {"portal_url": portal["url"]}
 
@@ -113,7 +125,9 @@ async def stripe_webhook(request: Request, session: SessionDep, settings: Settin
     if not settings.stripe_webhook_secret:
         raise AppError("Webhook secret not configured", code="stripe_config", status_code=503)
     try:
-        event = stripe.Webhook.construct_event(payload, sig, settings.stripe_webhook_secret)
+        constructed = stripe.Webhook.construct_event(
+            payload, sig, settings.stripe_webhook_secret
+        )
     except Exception as exc:  # noqa: BLE001
         raise AppError(
             "Invalid Stripe signature",
@@ -121,8 +135,21 @@ async def stripe_webhook(request: Request, session: SessionDep, settings: Settin
             status_code=400,
         ) from exc
 
+    # Newer stripe-python returns StripeObjects; normalize to plain dicts.
+    event = constructed.to_dict() if hasattr(constructed, "to_dict") else dict(constructed)
+    data_object = event.get("data", {}).get("object") or {}
+    if hasattr(data_object, "to_dict"):
+        data = data_object.to_dict()
+    elif isinstance(data_object, dict):
+        data = data_object
+    else:
+        data = dict(data_object)
+
+    event_id = str(event.get("id") or "")
+    etype = str(event.get("type") or "")
+
     existing = session.exec(
-        select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == event["id"])
+        select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == event_id)
     ).first()
 
     if existing:
@@ -130,21 +157,21 @@ async def stripe_webhook(request: Request, session: SessionDep, settings: Settin
 
     session.add(
         StripeWebhookEvent(
-            stripe_event_id=event["id"],
-            event_type=event["type"],
+            stripe_event_id=event_id,
+            event_type=etype,
             status="processed",
         )
     )
-
-    etype = event["type"]
-    data = event["data"]["object"]
 
     if etype in {
         "customer.subscription.created",
         "customer.subscription.updated",
         "customer.subscription.deleted",
     }:
-        org_id = (data.get("metadata") or {}).get("organization_id")
+        metadata = data.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = dict(metadata) if metadata else {}
+        org_id = metadata.get("organization_id")
         customer_id = data.get("customer")
         if not org_id and customer_id:
             bc = session.exec(
@@ -153,18 +180,24 @@ async def stripe_webhook(request: Request, session: SessionDep, settings: Settin
             org_id = str(bc.organization_id) if bc else None
         if org_id:
             sub = session.exec(
-                select(Subscription).where(Subscription.organization_id == org_id)
+                select(Subscription).where(Subscription.organization_id == UUID(str(org_id)))
             ).first()
             if sub is None:
-                sub = Subscription(organization_id=UUID(org_id))
+                sub = Subscription(organization_id=UUID(str(org_id)))
             status = data.get("status") or SubscriptionStatus.NONE.value
             if etype.endswith("deleted"):
                 status = SubscriptionStatus.CANCELED.value
             sub.status = status
             sub.stripe_subscription_id = data.get("id")
-            items = (data.get("items") or {}).get("data") or []
-            if items:
-                sub.stripe_price_id = items[0].get("price", {}).get("id")
+            items = data.get("items") or {}
+            if not isinstance(items, dict):
+                items = items.to_dict() if hasattr(items, "to_dict") else {}
+            item_rows = items.get("data") or []
+            if item_rows:
+                price = (item_rows[0] or {}).get("price") or {}
+                if not isinstance(price, dict):
+                    price = price.to_dict() if hasattr(price, "to_dict") else {}
+                sub.stripe_price_id = price.get("id")
             if status in {SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIALING.value}:
                 sub.plan_tier = PlanTier.PRO.value
             elif status == SubscriptionStatus.CANCELED.value:
@@ -174,17 +207,21 @@ async def stripe_webhook(request: Request, session: SessionDep, settings: Settin
             session.add(sub)
 
     elif etype == "checkout.session.completed":
-        org_id = (data.get("metadata") or {}).get("organization_id")
+        metadata = data.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = dict(metadata) if metadata else {}
+        org_id = metadata.get("organization_id")
         if org_id:
             sub = session.exec(
-                select(Subscription).where(Subscription.organization_id == org_id)
+                select(Subscription).where(Subscription.organization_id == UUID(str(org_id)))
             ).first()
             if sub is None:
-                sub = Subscription(organization_id=UUID(org_id))
+                sub = Subscription(organization_id=UUID(str(org_id)))
             if data.get("mode") == "subscription":
                 sub.status = SubscriptionStatus.ACTIVE.value
                 sub.plan_tier = PlanTier.PRO.value
                 sub.stripe_price_id = settings.stripe_price_id
+                sub.stripe_subscription_id = data.get("subscription")
                 sub.updated_at = utcnow()
                 session.add(sub)
 

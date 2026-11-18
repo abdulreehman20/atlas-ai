@@ -1,4 +1,4 @@
-"""Human-in-the-loop approval records."""
+"""Human-in-the-loop approval records + allowlisted execution."""
 
 from __future__ import annotations
 
@@ -8,12 +8,15 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
+from app.ai.vector_store import VectorStoreClient
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.security import Principal
 from app.db.models.approval import Approval
 from app.db.models.enums import ApprovalStatus
+from app.services.approval_executor import ALLOWLISTED_TOOLS, execute_approved_tool
 from app.services.audit import record_audit
 from app.services.auth import require_role
+from app.services.storage import StorageClient
 
 
 def create_approval(
@@ -27,6 +30,8 @@ def create_approval(
     checkpoint_thread_id: str | None = None,
     request_id: str | None = None,
 ) -> Approval:
+    if tool_name not in ALLOWLISTED_TOOLS:
+        raise ForbiddenError(f"Unsupported tool_name for approval: {tool_name}")
 
     approval = Approval(
         workspace_id=principal.workspace_id,
@@ -72,9 +77,10 @@ def decide_approval(
     approval_id: UUID,
     decision: Literal["approve", "reject"],
     note: str | None = None,
+    storage: StorageClient | None = None,
+    vectors: VectorStoreClient | None = None,
     request_id: str | None = None,
 ) -> Approval:
-
     require_role(principal, "owner")
     approval = session.get(Approval, approval_id)
     if approval is None or approval.workspace_id != principal.workspace_id:
@@ -106,4 +112,40 @@ def decide_approval(
     )
     session.commit()
     session.refresh(approval)
+
+    if decision == "approve":
+        approval.status = ApprovalStatus.EXECUTING.value
+        session.add(approval)
+        session.commit()
+        try:
+            execute_approved_tool(
+                session,
+                principal=principal,
+                approval=approval,
+                storage=storage,
+                vectors=vectors,
+            )
+            approval.status = ApprovalStatus.EXECUTED.value
+            approval.executed_at = datetime.now(UTC)
+            session.add(approval)
+            record_audit(
+                session,
+                action="approval.executed",
+                actor_user_id=principal.user_id,
+                organization_id=principal.organization_id,
+                workspace_id=principal.workspace_id,
+                target_type="approval",
+                target_id=str(approval.id),
+                request_id=request_id,
+            )
+            session.commit()
+            session.refresh(approval)
+        except Exception as exc:
+            approval.status = ApprovalStatus.APPROVED.value
+            approval.decision_note = (approval.decision_note or "") + f" | execute_failed: {exc}"
+            session.add(approval)
+            session.commit()
+            session.refresh(approval)
+            raise
+
     return approval

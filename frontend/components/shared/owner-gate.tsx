@@ -1,11 +1,17 @@
 "use client";
 
 import type { ReactNode } from "react";
-
-import { useMe } from "@/hooks/use-me";
 import { ErrorState, LoadingBlock } from "@/components/shared/state-panel";
+import { useMe } from "@/hooks/use-me";
 
-export function OwnerGate({ children }: { children: ReactNode }) {
+export function OwnerGate({
+  children,
+  fallback,
+}: {
+  children: ReactNode;
+  /** When set, non-owners see this instead of the default error panel. */
+  fallback?: ReactNode;
+}) {
   const me = useMe();
 
   if (me.isLoading) {
@@ -13,6 +19,7 @@ export function OwnerGate({ children }: { children: ReactNode }) {
   }
 
   if (me.isError) {
+    if (fallback !== undefined) return fallback;
     return (
       <ErrorState
         title="Unable to load workspace"
@@ -24,6 +31,7 @@ export function OwnerGate({ children }: { children: ReactNode }) {
   }
 
   if (me.data?.role !== "owner") {
+    if (fallback !== undefined) return fallback;
     return (
       <ErrorState
         title="Owner access required"

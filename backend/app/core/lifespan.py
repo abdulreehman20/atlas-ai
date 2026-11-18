@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.ai.checkpointer import build_checkpointer
 from app.ai.observability import configure_langsmith
-from app.core.config import Settings, get_settings
+from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db import engine as engine_module
 from app.db.engine import create_db_engine
@@ -25,6 +25,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine = create_db_engine(settings)
     app.state.settings = settings
     app.state.engine = engine
+    checkpointer = None
+    if settings.app_env != "test":
+        try:
+            checkpointer = build_checkpointer(settings)
+        except Exception as exc:
+            logger.warning("Checkpointer init skipped: %s", exc)
+    app.state.checkpointer = checkpointer
     logger.info("Atlas backend started env=%s", settings.app_env)
     try:
         yield
@@ -33,14 +40,3 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if settings.app_env != "test":
             engine_module.dispose_engine()
         logger.info("Atlas backend shutdown complete")
-
-
-# DELETE -- This is not in use. lifespan calls configure_langsmith instead.
-def apply_langsmith_env(settings: Settings) -> None:
-    """Expose LangSmith env vars for LangChain auto-instrumentation."""
-    if settings.langsmith_tracing:
-        os.environ["LANGSMITH_TRACING"] = "true"
-        if settings.langsmith_api_key:
-            os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
-        if settings.langsmith_project:
-            os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project

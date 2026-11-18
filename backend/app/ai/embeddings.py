@@ -1,30 +1,48 @@
-"""Bedrock Titan embedding adapter (injectable)."""
+"""Embedding adapter — OpenRouter via LangChain OpenAIEmbeddings."""
 
 from __future__ import annotations
 
 from typing import Protocol
 
-from langchain_aws import BedrockEmbeddings
+from langchain_openai import OpenAIEmbeddings
 
 from app.core.config import Settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class EmbeddingClient(Protocol):
     def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
+
     def embed_query(self, text: str) -> list[float]: ...
 
 
-class BedrockEmbeddingClient:
+class OpenRouterEmbeddingClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._client: BedrockEmbeddings | None = None
+        self._client: OpenAIEmbeddings | None = None
 
-    def _ensure(self) -> BedrockEmbeddings:
+    def _ensure(self) -> OpenAIEmbeddings:
         if self._client is not None:
             return self._client
-        self._client = BedrockEmbeddings(
-            model_id=self._settings.bedrock_embedding_model_id,
-            region_name=self._settings.aws_region,
+        if not self._settings.openrouter_api_key:
+            raise RuntimeError("OPENROUTER_API_KEY is not configured")
+        logger.info(
+            "Initializing OpenRouter embeddings model=%s dim=%s",
+            self._settings.openrouter_embedding_model,
+            self._settings.embedding_dimension,
+        )
+        # Nemotron 3 Embed 1B is native 2048-d; do not pass reduced dimensions.
+        self._client = OpenAIEmbeddings(
+            model=self._settings.openrouter_embedding_model,
+            api_key=self._settings.openrouter_api_key,
+            base_url=self._settings.openrouter_base_url,
+            check_embedding_ctx_length=False,
+            default_headers={
+                "HTTP-Referer": self._settings.frontend_url,
+                "X-Title": self._settings.app_name,
+            },
         )
         return self._client
 
@@ -38,7 +56,7 @@ class BedrockEmbeddingClient:
 
 
 class StubEmbeddingClient:
-    def __init__(self, dimension: int = 1024) -> None:
+    def __init__(self, dimension: int = 2048) -> None:
         self.dimension = dimension
 
     def _vector(self, text: str) -> list[float]:

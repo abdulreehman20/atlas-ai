@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
-from app.api.deps import PrincipalDep, RequestIdDep, SessionDep
+from app.api.deps import PrincipalDep, RequestIdDep, SessionDep, StorageClientDep, VectorStoreDep
 from app.schemas.approvals import (
     ApprovalCreateRequest,
     ApprovalDecisionRequest,
@@ -22,7 +22,6 @@ def list_approvals(
     principal: PrincipalDep,
     session: SessionDep,
 ) -> list[ApprovalResponse]:
-
     rows = approval_service.list_approvals(session, principal=principal)
     return [ApprovalResponse.model_validate(row) for row in rows]
 
@@ -34,7 +33,6 @@ def create_approval(
     session: SessionDep,
     request_id: RequestIdDep,
 ) -> ApprovalResponse:
-
     row = approval_service.create_approval(
         session,
         principal=principal,
@@ -54,15 +52,18 @@ def decide_approval(
     body: ApprovalDecisionRequest,
     principal: PrincipalDep,
     session: SessionDep,
+    storage: StorageClientDep,
+    vectors: VectorStoreDep,
     request_id: RequestIdDep,
 ) -> ApprovalResponse:
-
     row = approval_service.decide_approval(
         session,
         principal=principal,
         approval_id=approval_id,
         decision=body.decision,
         note=body.note,
+        storage=storage,
+        vectors=vectors,
         request_id=request_id,
     )
     return ApprovalResponse.model_validate(row)

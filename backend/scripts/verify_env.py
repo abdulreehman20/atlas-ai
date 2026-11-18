@@ -25,9 +25,9 @@ REQUIRED = [
     "DATABASE_URL",
     "MIGRATION_DATABASE_URL",
     "CHECKPOINT_DATABASE_URL",
-    "AWS_REGION",
-    "BEDROCK_CHAT_MODEL_ID",
-    "BEDROCK_EMBEDDING_MODEL_ID",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_CHAT_MODEL",
+    "OPENROUTER_EMBEDDING_MODEL",
     "EMBEDDING_DIMENSION",
     "PINECONE_API_KEY",
     "PINECONE_INDEX_NAME",
@@ -44,8 +44,7 @@ AUTH_VERIFY_KEYS = (
 )
 
 OPTIONAL = [
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
+    "OPENROUTER_BASE_URL",
     "PINECONE_INDEX_HOST",
     "STRIPE_WEBHOOK_SECRET",
     "LANGSMITH_TRACING",
@@ -74,8 +73,11 @@ def main() -> int:
         missing.append("SUPABASE_JWT_SECRET|SUPABASE_JWKS_URL")
 
     dim = os.getenv("EMBEDDING_DIMENSION", "").strip()
-    if dim and dim != "1024":
-        print(f"INVALID EMBEDDING_DIMENSION={dim!r}; expected 1024 for Titan V2 v1 setup")
+    if dim and dim != "2048":
+        print(
+            f"INVALID EMBEDDING_DIMENSION={dim!r}; "
+            "expected 2048 for nvidia/nemotron-3-embed-1b:free"
+        )
         return 1
 
     index = os.getenv("PINECONE_INDEX_NAME", "").strip()

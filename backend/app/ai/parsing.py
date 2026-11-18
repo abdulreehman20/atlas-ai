@@ -91,6 +91,8 @@ def _parse_html(content: bytes) -> ParsedDocument:
 
 
 def _normalize(text: str) -> str:
+    # pypdf often emits NUL bytes in ligatures/invoice IDs; Postgres rejects \x00 in text.
+    text = text.replace("\x00", "")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)

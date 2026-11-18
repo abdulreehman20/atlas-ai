@@ -12,7 +12,7 @@ from uuid import UUID
 
 from sqlmodel import Session
 
-from app.ai.embeddings import BedrockEmbeddingClient, StubEmbeddingClient
+from app.ai.embeddings import OpenRouterEmbeddingClient, StubEmbeddingClient
 from app.ai.vector_store import InMemoryVectorStore, PineconeVectorStore
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
@@ -37,8 +37,8 @@ def main() -> int:
     else:
         storage = InMemoryStorageClient()
 
-    if settings.aws_access_key_id:
-        embeddings = BedrockEmbeddingClient(settings)
+    if settings.openrouter_api_key:
+        embeddings = OpenRouterEmbeddingClient(settings)
     else:
         embeddings = StubEmbeddingClient(dimension=settings.embedding_dimension)
 

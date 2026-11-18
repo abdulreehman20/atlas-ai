@@ -25,7 +25,6 @@ def list_workspace_documents(session: Session, *, workspace_id: UUID) -> list[Do
     return list(session.exec(statement).all())
 
 
-# DELETE -- This is not in use by live routes (only orphaned services/documents.py).
 def get_document(session: Session, *, document_id: UUID) -> Document | None:
     return session.get(Document, document_id)
 

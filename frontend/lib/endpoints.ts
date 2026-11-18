@@ -1,3 +1,4 @@
+import { apiFetch } from "@/lib/client";
 import type {
   ApprovalItem,
   ChatResponse,
@@ -7,15 +8,15 @@ import type {
   DeleteDocumentResponse,
   DocumentCreateResponse,
   DocumentItem,
-  MeResponse,
+  DocumentViewUrlResponse,
   MemberItem,
+  MeResponse,
   Paginated,
   PortalResponse,
   SubscriptionStatus,
   UploadCompleteResponse,
   WorkspaceSettings,
 } from "@/types/types";
-import { apiFetch } from "@/lib/client";
 
 export function fetchMe() {
   return apiFetch<MeResponse>("/me");
@@ -66,6 +67,19 @@ export function completeDocumentUpload(
   );
 }
 
+export function reprocessDocument(documentId: string) {
+  return apiFetch<UploadCompleteResponse>(
+    `/documents/${documentId}/reprocess`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export function fetchDocumentViewUrl(documentId: string) {
+  return apiFetch<DocumentViewUrlResponse>(`/documents/${documentId}/view-url`);
+}
+
 export function deleteDocument(documentId: string) {
   return apiFetch<DeleteDocumentResponse>(`/documents/${documentId}`, {
     method: "DELETE",
@@ -98,22 +112,35 @@ export function fetchWorkspaceSettings() {
 }
 
 export function updateWorkspaceSettings(input: {
-  system_prompt_override: string | null;
+  name?: string;
+  system_prompt_override?: string | null;
 }) {
-  return apiFetch<WorkspaceSettings>("/workspaces/current/system-prompt", {
+  return apiFetch<WorkspaceSettings>("/workspaces/current", {
     method: "PUT",
     body: input,
   });
+}
+
+export function deleteWorkspace() {
+  return apiFetch<{
+    workspace_id: string;
+    organization_id: string;
+    status: string;
+  }>("/workspaces/current", { method: "DELETE" });
 }
 
 export function fetchMembers() {
   return apiFetch<Paginated<MemberItem>>("/workspaces/current/members");
 }
 
-export function inviteMember(email: string) {
+export function inviteMember(input: {
+  email: string;
+  first_name?: string;
+  last_name?: string;
+}) {
   return apiFetch<MemberItem>("/workspaces/current/members", {
     method: "POST",
-    body: { email },
+    body: input,
   });
 }
 

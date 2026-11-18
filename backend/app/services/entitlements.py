@@ -95,8 +95,11 @@ def assert_can_upload(
 
     if size_bytes > max_bytes:
         raise EntitlementError(
-            "File exceeds plan size limit",
+            f"File exceeds the Free plan limit of {entitlements.max_file_size_mib} MiB. Upgrade to Pro for larger uploads.",
+            quota="max_file_size",
             details={
+                "upgrade_required": True,
+                "plan": "pro",
                 "max_file_size_mib": entitlements.max_file_size_mib,
                 "size_bytes": size_bytes,
             },
@@ -105,16 +108,28 @@ def assert_can_upload(
     docs = document_repo.count_active_documents(session, workspace_id=workspace_id)
     if docs >= entitlements.document_limit:
         raise EntitlementError(
-            "Document limit reached for current plan",
-            details={"document_limit": entitlements.document_limit, "documents_used": docs},
+            f"Document limit reached ({entitlements.document_limit} on Free). Upgrade to Pro for more documents.",
+            quota="documents",
+            details={
+                "upgrade_required": True,
+                "plan": "pro",
+                "document_limit": entitlements.document_limit,
+                "documents_used": docs,
+            },
         )
 
     used = document_repo.sum_storage_bytes(session, workspace_id=workspace_id)
     storage_cap = entitlements.storage_mib * 1024 * 1024
     if used + size_bytes > storage_cap:
         raise EntitlementError(
-            "Storage limit reached for current plan",
-            details={"storage_mib": entitlements.storage_mib, "storage_used_bytes": used},
+            f"Storage limit reached ({entitlements.storage_mib} MiB on Free). Upgrade to Pro for more storage.",
+            quota="storage",
+            details={
+                "upgrade_required": True,
+                "plan": "pro",
+                "storage_mib": entitlements.storage_mib,
+                "storage_used_bytes": used,
+            },
         )
     return entitlements
 
@@ -134,8 +149,11 @@ def assert_can_chat(
 
     if chats >= entitlements.chat_monthly_limit:
         raise EntitlementError(
-            "Monthly chat limit reached for current plan",
+            f"Monthly chat limit reached ({entitlements.chat_monthly_limit} on Free). Upgrade to Pro for more chats.",
+            quota="chats_monthly",
             details={
+                "upgrade_required": True,
+                "plan": "pro",
                 "chat_monthly_limit": entitlements.chat_monthly_limit,
                 "chats_used": chats,
             },
@@ -151,11 +169,17 @@ def assert_can_invite(
     workspace_id: UUID,
 ) -> Entitlements:
     entitlements = get_entitlements_for_org(session, settings, organization_id=organization_id)
-    members = membership_repo.count_active_members(session, workspace_id=workspace_id)
+    members = membership_repo.count_seat_members(session, workspace_id=workspace_id)
 
     if members >= entitlements.member_limit:
         raise EntitlementError(
-            "Member limit reached for current plan",
-            details={"member_limit": entitlements.member_limit, "members_used": members},
+            "To invite more members, upgrade to the Pro plan.",
+            quota="members",
+            details={
+                "upgrade_required": True,
+                "plan": "pro",
+                "member_limit": entitlements.member_limit,
+                "members_used": members,
+            },
         )
     return entitlements

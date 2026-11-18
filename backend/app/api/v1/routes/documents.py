@@ -1,17 +1,24 @@
+"""Document upload, list, reprocess, and delete routes."""
+
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel, Field
-from sqlmodel import col, select
 
-from app.api.deps import PrincipalDep, SessionDep, SettingsDep
-from app.core.exceptions import AppError, ForbiddenError, NotFoundError
-from app.db.models import Document, DocumentVersion, IngestionJob
-from app.db.models.enums import DocumentStatus, IngestionJobStatus
-from app.services.entitlements import assert_can_upload
+from app.api.deps import (
+    PrincipalDep,
+    RequestIdDep,
+    SessionDep,
+    SettingsDep,
+    StorageClientDep,
+    VectorStoreDep,
+)
+from app.core.exceptions import AppError
+from app.services import documents as document_service
+from app.services.ingestion_runner import run_ingestion_job
 from app.services.parsing import SUPPORTED_EXTENSIONS
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -26,6 +33,7 @@ class CreateDocumentRequest(BaseModel):
 
 class UploadCompleteRequest(BaseModel):
     storage_path: str
+    checksum: str | None = None
 
 
 @router.post("")
@@ -34,39 +42,40 @@ def create_document(
     principal: PrincipalDep,
     session: SessionDep,
     settings: SettingsDep,
+    storage: StorageClientDep,
+    request_id: RequestIdDep,
 ) -> dict:
     suffix = Path(body.filename).suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
         raise AppError(f"Unsupported file type: {suffix}", code="unsupported_type", status_code=422)
-    assert_can_upload(
+    doc = document_service.create_document(
         session,
         settings,
-        organization_id=principal.organization_id,
-        workspace_id=principal.workspace_id,
-        size_bytes=body.size_bytes,
-    )
-    doc_id = uuid4()
-    storage_path = f"{principal.workspace_id}/{doc_id}/{body.filename}"
-    doc = Document(
-        id=doc_id,
-        workspace_id=principal.workspace_id,
-        organization_id=principal.organization_id,
-        owner_user_id=principal.user_id,
+        principal=principal,
         title=body.title or body.filename,
         original_filename=body.filename,
-        storage_object_path=storage_path,
         mime_type=body.mime_type or "application/octet-stream",
         size_bytes=body.size_bytes,
-        status=DocumentStatus.UPLOAD_PENDING.value,
+        request_id=request_id,
     )
-    session.add(doc)
-    session.commit()
-    session.refresh(doc)
+    upload: dict[str, str] = {}
+    if doc.storage_object_path:
+        try:
+            upload = storage.create_signed_upload(doc.storage_object_path)
+        except Exception as exc:  # noqa: BLE001
+            raise AppError(
+                f"Could not create signed upload URL: {exc}",
+                code="signed_upload_failed",
+                status_code=503,
+            ) from exc
+
     return {
         "id": str(doc.id),
-        "storage_path": storage_path,
+        "storage_path": doc.storage_object_path,
         "bucket": settings.supabase_storage_bucket,
         "status": doc.status,
+        "upload_token": upload.get("token"),
+        "upload_url": upload.get("signed_url"),
     }
 
 
@@ -76,52 +85,28 @@ def upload_complete(
     body: UploadCompleteRequest,
     principal: PrincipalDep,
     session: SessionDep,
+    settings: SettingsDep,
+    storage: StorageClientDep,
+    request_id: RequestIdDep,
+    background_tasks: BackgroundTasks,
 ) -> dict:
-    doc = session.get(Document, document_id)
-    if doc is None or doc.workspace_id != principal.workspace_id:
-        raise NotFoundError("Document not found")
-    if doc.owner_user_id != principal.user_id and principal.role != "owner":
-        raise ForbiddenError("Not allowed")
-    doc.storage_object_path = body.storage_path
-    doc.status = DocumentStatus.UPLOADED.value
-    version = DocumentVersion(
-        document_id=doc.id,
-        workspace_id=doc.workspace_id,
-        version_number=1,
+    doc, job = document_service.complete_upload(
+        session,
+        settings,
+        principal=principal,
+        document_id=document_id,
         storage_object_path=body.storage_path,
-        mime_type=doc.mime_type,
-        size_bytes=doc.size_bytes,
-        status=DocumentStatus.UPLOADED.value,
+        storage=storage,
+        checksum=body.checksum,
+        request_id=request_id,
     )
-    session.add(doc)
-    session.add(version)
-    session.flush()
-    doc.current_version_id = version.id
-    job = IngestionJob(
-        document_id=doc.id,
-        document_version_id=version.id,
-        workspace_id=doc.workspace_id,
-        organization_id=doc.organization_id,
-        status=IngestionJobStatus.QUEUED.value,
-    )
-    doc.status = DocumentStatus.QUEUED.value
-    session.add(job)
-    session.add(doc)
-    session.commit()
-    session.refresh(job)
+    background_tasks.add_task(run_ingestion_job, str(job.id))
     return {"document_id": str(doc.id), "job_id": str(job.id), "status": doc.status}
 
 
 @router.get("")
 def list_documents(principal: PrincipalDep, session: SessionDep) -> dict:
-    rows = session.exec(
-        select(Document)
-        .where(
-            Document.workspace_id == principal.workspace_id,
-            col(Document.status) != DocumentStatus.DELETED.value,
-        )
-        .order_by(col(Document.created_at).desc())
-    ).all()
+    rows = document_service.list_documents(session, principal=principal)
     return {
         "items": [
             {
@@ -131,21 +116,74 @@ def list_documents(principal: PrincipalDep, session: SessionDep) -> dict:
                 "status": d.status,
                 "size_bytes": d.size_bytes,
                 "owner_user_id": d.owner_user_id,
+                "storage_path": d.storage_object_path,
                 "created_at": d.created_at.isoformat(),
+                "error_message": d.error_message,
             }
             for d in rows
         ]
     }
 
 
+@router.get("/{document_id}/view-url")
+def view_document_url(
+    document_id: UUID,
+    principal: PrincipalDep,
+    session: SessionDep,
+    storage: StorageClientDep,
+) -> dict:
+    doc = document_service.get_document(session, principal=principal, document_id=document_id)
+    if not doc.storage_object_path:
+        raise AppError("Document has no uploaded file", code="no_storage_object", status_code=404)
+    try:
+        url = storage.create_signed_url(doc.storage_object_path, expires_in=3600)
+    except Exception as exc:  # noqa: BLE001 — surface as 404 for missing objects
+        raise AppError("Could not create view URL", code="signed_url_failed", status_code=404) from exc
+    return {
+        "document_id": str(doc.id),
+        "url": url,
+        "filename": doc.original_filename,
+        "expires_in": 3600,
+    }
+
+
+@router.post("/{document_id}/reprocess")
+def reprocess_document(
+    document_id: UUID,
+    principal: PrincipalDep,
+    session: SessionDep,
+    request_id: RequestIdDep,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    job = document_service.reprocess_document(
+        session,
+        principal=principal,
+        document_id=document_id,
+        request_id=request_id,
+    )
+    background_tasks.add_task(run_ingestion_job, str(job.id))
+    return {
+        "document_id": str(job.document_id),
+        "job_id": str(job.id),
+        "status": job.status,
+    }
+
+
 @router.delete("/{document_id}")
-def delete_document(document_id: UUID, principal: PrincipalDep, session: SessionDep) -> dict:
-    doc = session.get(Document, document_id)
-    if doc is None or doc.workspace_id != principal.workspace_id:
-        raise NotFoundError("Document not found")
-    if principal.role != "owner" and doc.owner_user_id != principal.user_id:
-        raise ForbiddenError("Members may delete only their own documents")
-    doc.status = DocumentStatus.DELETED.value
-    session.add(doc)
-    session.commit()
-    return {"id": str(doc.id), "status": "deleted"}
+def delete_document(
+    document_id: UUID,
+    principal: PrincipalDep,
+    session: SessionDep,
+    storage: StorageClientDep,
+    vectors: VectorStoreDep,
+    request_id: RequestIdDep,
+) -> dict:
+    doc = document_service.delete_document(
+        session,
+        principal=principal,
+        document_id=document_id,
+        storage=storage,
+        vectors=vectors,
+        request_id=request_id,
+    )
+    return {"id": str(doc.id), "status": doc.status}

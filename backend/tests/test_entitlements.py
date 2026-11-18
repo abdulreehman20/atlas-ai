@@ -68,6 +68,8 @@ def test_upload_blocked_when_document_limit_reached(
             size_bytes=100,
         )
     assert exc.value.code == "entitlement_exceeded"
+    assert "Upgrade to Pro" in exc.value.message
+    assert exc.value.details.get("upgrade_required") is True
 
 
 def test_chat_blocked_when_monthly_limit_reached(

@@ -15,8 +15,5 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     redirect("/login");
   }
 
-  const email =
-    typeof data.claims.email === "string" ? data.claims.email : null;
-
-  return <AppShell email={email}>{children}</AppShell>;
+return <AppShell>{children}</AppShell>;
 }
