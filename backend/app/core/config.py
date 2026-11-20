@@ -18,6 +18,12 @@ class Settings(BaseSettings):
 
     app_env: Literal["development", "staging", "production", "test"] = "development"
     app_name: str = "Atlas Enterprise AI"
+    app_description: str = (
+        "Enterprise knowledge copilot API — grounded RAG over workspace documents, "
+        "with auth, billing, and human-in-the-loop approvals."
+    )
+    docs_url: str | None = "/docs"
+    redoc_url: str | None = "/redoc"
     api_v1_prefix: str = "/api/v1"
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
@@ -82,6 +88,15 @@ class Settings(BaseSettings):
     pro_storage_mib: int = 20480
     pro_chat_monthly: int = 5000
     pro_max_file_mib: int = 25
+
+    @field_validator("docs_url", "redoc_url", mode="before")
+    @classmethod
+    def empty_docs_url_to_none(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("cors_origins", mode="before")
     @classmethod
